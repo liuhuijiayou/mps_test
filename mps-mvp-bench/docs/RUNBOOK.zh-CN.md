@@ -117,6 +117,11 @@ mps-bench plan --config configs/runtime.yaml --profile standard
 mps-bench plan --config configs/runtime.yaml --profile standard --family baselines
 ```
 
+> `--family` 按 `cases/` 下的**目录名**过滤，合法值是：
+> `baselines` `high_high` `high_low` `memory` `negative` `faults`。
+> 注意目录名与 YAML 里的 `case.family` 字段不完全一致
+> （目录 `baselines` 对应字段 `baseline`），以目录名为准。
+
 ## 步骤 5：冒烟
 
 ```bash

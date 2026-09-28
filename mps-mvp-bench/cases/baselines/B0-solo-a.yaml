@@ -1,0 +1,42 @@
+# 由 tools/gen_cases.py 生成，可手工微调；字段含义见 docs/CONFIG.zh-CN.md
+case:
+  id: B0
+  family: baseline
+  mode: nonmps_solo
+  description: 非 MPS，A 单跑：整卡独占基线
+  reference:
+  - B0
+  solo_client: a
+clients:
+  a:
+    role: high
+    workload: image_inference
+    mode: online
+    model:
+      name: resnet18
+      input_size: 224
+      precision: fp16
+      batch_size: 8
+      input_pool_size: 64
+      cpu_threads: 4
+    load:
+      arrival: poisson
+      target_qps: 120.0
+      concurrency: 32
+      queue_limit: 512
+  b:
+    role: high
+    workload: image_inference
+    mode: offline
+    model:
+      name: resnet50
+      input_size: 224
+      precision: fp16
+      batch_size: 64
+      input_pool_size: 32
+      cpu_threads: 4
+    load:
+      arrival: closed_loop
+      target_qps: null
+      concurrency: 4
+      queue_limit: 64

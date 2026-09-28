@@ -1,0 +1,65 @@
+# 由 tools/gen_cases.py 生成，可手工微调；字段含义见 docs/CONFIG.zh-CN.md
+case:
+  id: NEG-bandwidth
+  family: negative
+  mode: mps_concurrent
+  description: 显存带宽/L2 争用：两个较大 embedding 推荐任务，观察 SM active 上升时是否仍有业务退化
+  reference:
+  - B0
+  - B2
+  sweep:
+  - name: ws-2x
+    set:
+      clients.a.recsys.working_set_rows: 1600000
+      clients.b.recsys.working_set_rows: 1600000
+      clients.a.recsys.rows_per_table: 1600000
+      clients.b.recsys.rows_per_table: 1600000
+  - name: uniform-idx
+    set:
+      clients.a.recsys.index_distribution: uniform
+      clients.b.recsys.index_distribution: uniform
+clients:
+  a:
+    role: high
+    workload: recsys_scoring
+    mode: offline
+    model: &id001
+      precision: fp16
+      batch_size: 4096
+      input_pool_size: 16
+      cpu_threads: 4
+    recsys: &id002
+      num_tables: 24
+      rows_per_table: 800000
+      embedding_dim: 128
+      indices_per_sample: 48
+      dense_features: 256
+      bottom_mlp:
+      - 1024
+      - 512
+      - 128
+      top_mlp:
+      - 1024
+      - 512
+      - 1
+      index_distribution: zipf
+      zipf_s: 1.0
+      working_set_rows: 800000
+    load: &id003
+      arrival: closed_loop
+      target_qps: null
+      concurrency: 4
+      queue_limit: 32
+    mps:
+      active_thread_percentage: 100
+      priority: NORMAL
+  b:
+    role: high
+    workload: recsys_scoring
+    mode: offline
+    model: *id001
+    recsys: *id002
+    load: *id003
+    mps:
+      active_thread_percentage: 100
+      priority: NORMAL

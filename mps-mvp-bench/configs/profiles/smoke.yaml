@@ -1,0 +1,12 @@
+# smoke profile：只验链路是否打通，不作为任何性能证据。
+measure:
+  profile: smoke
+  warmup_s: 5
+  duration_s: 15
+  repeats: 1
+  drain_timeout_s: 10
+telemetry:
+  # smoke 允许 SM active 缺失（仅验链路）；标准验收必须为 true
+  require_sm_metrics: false
+  allow_degraded: true
+  sample_interval_s: 1.0

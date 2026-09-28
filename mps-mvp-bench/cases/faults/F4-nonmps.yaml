@@ -1,0 +1,52 @@
+# 由 tools/gen_cases.py 生成，可手工微调；字段含义见 docs/CONFIG.zh-CN.md
+case:
+  id: F4-NONMPS
+  family: fault
+  mode: nonmps_concurrent
+  description: F4 非 MPS 对照：同一注入在无 MPS 下的对端影响
+  reference:
+  - B0
+  - B2
+  fault: F4
+  enabled: false
+clients:
+  a:
+    role: high
+    workload: image_inference
+    mode: online
+    model:
+      name: resnet18
+      input_size: 224
+      precision: fp16
+      batch_size: 8
+      input_pool_size: 64
+      cpu_threads: 4
+    load:
+      arrival: poisson
+      target_qps: 120.0
+      concurrency: 32
+      queue_limit: 512
+  b:
+    role: low
+    workload: image_inference
+    mode: offline
+    model:
+      name: resnet50
+      input_size: 224
+      precision: fp16
+      batch_size: 64
+      input_pool_size: 32
+      cpu_threads: 4
+    load:
+      arrival: closed_loop
+      target_qps: null
+      concurrency: 4
+      queue_limit: 64
+faults:
+  enabled: true
+  allow_disruptive: false
+  inject_after_s: 20
+  observe_window_s: 30
+  repeats: 3
+  recovery_levels:
+  - R1

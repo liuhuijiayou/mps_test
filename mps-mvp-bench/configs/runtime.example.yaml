@@ -1,0 +1,108 @@
+# 运行时配置示例 —— 复制为 configs/runtime.yaml 后按目标机填写。
+# 说明见 docs/CONFIG.zh-CN.md。未知字段会被拒绝。
+
+meta:
+  project: mps-mvp-bench
+  notes: "A30 单卡 MPS MVP 验证"
+
+paths:
+  results_dir: results
+  # 本实验专属 MPS pipe / log 目录，禁止使用默认 /tmp/nvidia-mps
+  mps_pipe_dir: /tmp/mps-mvp-bench/pipe
+  mps_log_dir: /tmp/mps-mvp-bench/log
+  # 可选：宿主机权重/输入目录，容器内只读挂到 /assets
+  model_mount: null
+
+gpu:
+  # 必填（真实 GPU 执行前）。用 `nvidia-smi --query-gpu=uuid,index,name --format=csv` 获取。
+  # 不要使用已被其他长期服务占用的那张卡。
+  uuid: null
+  # 可选断言：A30 为 24576
+  expect_total_memory_mib: null
+
+docker:
+  binary: docker
+  image: mps-mvp-bench:0.1.0
+  # 必填（真实 GPU 执行前）：由用户提供的 GPU runtime / 设备透传参数，argv 片段。
+  # 示例（按目标机实际情况二选一或自定）：
+  #   ["--runtime=nvidia", "--gpus", "device=GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"]
+  #   ["--device", "/dev/nvidiactl", "--device", "/dev/nvidia3", ...]
+  # 禁止 --gpus all；必须包含上面的 gpu.uuid。
+  runtime_args: []
+  extra_args: []
+  # 业务容器 UID[:GID]，需与宿主机 MPS pipe 所属 UID 兼容（通常与启动 MPS 的用户一致）
+  user: null
+  shm_size: 1g
+  privileged: false
+  mount_docker_socket: false
+  pull: false
+
+mps:
+  control_binary: nvidia-cuda-mps-control
+  manage_on_host: true
+  # 默认不接管既有 MPS 实例
+  allow_adopt_existing: false
+  static_partitioning:
+    enabled: false
+    partitions: []
+
+compute_mode:
+  require_default_for_nonmps: true
+  # 默认不修改 compute mode；如需修改须用户授权，仅针对目标 UUID，并在 cleanup 恢复
+  allow_change: false
+
+measure:
+  profile: standard
+  warmup_s: 30
+  duration_s: 120
+  repeats: 5
+  drain_timeout_s: 30
+  interleave: ABBA
+  seed: 20251001
+  request_timeout_s: 5.0
+  total_budget_s: 21600
+  tolerance: 0.001
+  min_samples_p999: 100000
+
+slo:
+  # 阈值来自配置，代码中不硬编码
+  latency_p99_ms: null
+  max_latency_delta: null
+  min_throughput_delta: null
+  max_error_rate: 0.0
+  reference: B2
+
+telemetry:
+  enabled: true
+  sample_interval_s: 1.0
+  nvidia_smi_binary: nvidia-smi
+  dcgmi_binary: dcgmi
+  # 标准验收要求 SM active 可用
+  require_sm_metrics: true
+  dcgm_fields: [1002, 1003, 1005]
+  allow_degraded: false
+  nsight:
+    enabled: false
+
+memory:
+  probe_step_mib: 256
+  probe_touch: true
+  safety_margin_mib: 1024
+  expect_nonmps_no_quota: true
+
+faults:
+  enabled: false
+  allow_disruptive: false
+  inject_after_s: 20
+  observe_window_s: 30
+  repeats: 3
+  drain_timeout_s: 15
+  recovery_timeout_s: 120
+  long_kernel_ms: 2000
+  recovery_levels: [R1, R2]
+
+safety:
+  abort_on_foreign_gpu_process: true
+  health_check_between_rounds: true
+  stop_on_unhealthy: true
+  lock_dir: /tmp/mps-mvp-bench/locks

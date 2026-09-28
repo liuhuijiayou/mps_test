@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mps-mvp-bench"
+version = "0.1.0"
+description = "Containerized NVIDIA MPS MVP verification harness (host orchestrator)"
+requires-python = ">=3.9"
+# Host orchestrator must stay import-light: no torch / no CUDA python packages.
+dependencies = ["PyYAML>=6.0,<7"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]
+
+[project.scripts]
+mps-bench = "mps_bench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+markers = [
+  "gpu: requires a real GPU + docker + MPS; never collected in CPU CI",
+  "disruptive: destructive fault injection; requires --allow-disruptive",
+]

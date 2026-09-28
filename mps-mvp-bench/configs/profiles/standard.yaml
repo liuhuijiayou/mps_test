@@ -1,0 +1,12 @@
+# standard profile：正式验收口径。
+measure:
+  profile: standard
+  warmup_s: 30
+  duration_s: 120
+  repeats: 5
+  drain_timeout_s: 30
+  interleave: ABBA
+telemetry:
+  require_sm_metrics: true
+  allow_degraded: false
+  sample_interval_s: 1.0

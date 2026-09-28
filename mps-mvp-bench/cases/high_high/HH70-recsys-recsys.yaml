@@ -1,0 +1,80 @@
+# 由 tools/gen_cases.py 生成，可手工微调；字段含义见 docs/CONFIG.zh-CN.md
+case:
+  id: HH70
+  family: high_high
+  mode: mps_concurrent
+  description: 高优+高优，各 70%，显存各 50%（推荐+推荐）
+  reference:
+  - B0
+  - B2
+clients:
+  a:
+    role: high
+    workload: recsys_scoring
+    mode: online
+    model:
+      precision: fp16
+      batch_size: 512
+      input_pool_size: 32
+      cpu_threads: 4
+    recsys:
+      num_tables: 16
+      rows_per_table: 400000
+      embedding_dim: 64
+      indices_per_sample: 32
+      dense_features: 128
+      bottom_mlp:
+      - 512
+      - 256
+      - 64
+      top_mlp:
+      - 512
+      - 256
+      - 1
+      index_distribution: zipf
+      zipf_s: 1.1
+      working_set_rows: 400000
+    load:
+      arrival: poisson
+      target_qps: 60.0
+      concurrency: 16
+      queue_limit: 256
+    mps:
+      active_thread_percentage: 70
+      priority: NORMAL
+      pinned_device_mem_limit_fraction: 0.5
+  b:
+    role: high
+    workload: recsys_scoring
+    mode: offline
+    model:
+      precision: fp16
+      batch_size: 4096
+      input_pool_size: 16
+      cpu_threads: 4
+    recsys:
+      num_tables: 24
+      rows_per_table: 800000
+      embedding_dim: 128
+      indices_per_sample: 48
+      dense_features: 256
+      bottom_mlp:
+      - 1024
+      - 512
+      - 128
+      top_mlp:
+      - 1024
+      - 512
+      - 1
+      index_distribution: zipf
+      zipf_s: 1.0
+      working_set_rows: 800000
+    load:
+      arrival: closed_loop
+      target_qps: null
+      concurrency: 4
+      queue_limit: 32
+    mps:
+      active_thread_percentage: 70
+      priority: NORMAL
+      pinned_device_mem_limit_fraction: 0.5

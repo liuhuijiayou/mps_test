@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# virtualenv
+.venv/
+venv/
+env/
+
+# test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# native build output
+native/build/
+*.o
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# agent workspace
+.codeflicker/
+
+# ---------------------------------------------------------------------------
+# Run artifacts.
+#
+# results/ holds real measurements from a specific machine (GPU UUIDs, PIDs,
+# container IDs, raw per-request logs). It is deliberately untracked: results
+# belong to the run that produced them, not to the source tree.
+# ---------------------------------------------------------------------------
+results/
+
+# Machine-specific config. runtime.example.yaml IS tracked; the filled-in
+# runtime.yaml contains a real GPU UUID and host-specific device args.
+configs/runtime.yaml
+
+# Internal task spec — withheld from the public repo by default.
+# Remove this line if you decide it should be published.
+prompt.md

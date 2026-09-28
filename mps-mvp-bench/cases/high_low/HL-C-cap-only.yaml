@@ -1,0 +1,53 @@
+# 由 tools/gen_cases.py 生成，可手工微调；字段含义见 docs/CONFIG.zh-CN.md
+case:
+  id: HL-C
+  family: high_low
+  mode: mps_concurrent
+  description: 高优+低优，仅执行资源上限：高 100% / 低 50%，均 NORMAL
+  reference:
+  - B0
+  - B2
+  sweep:
+  - name: low70
+    set:
+      clients.b.mps.active_thread_percentage: 70
+clients:
+  a:
+    role: high
+    workload: image_inference
+    mode: online
+    model:
+      name: resnet18
+      input_size: 224
+      precision: fp16
+      batch_size: 8
+      input_pool_size: 64
+      cpu_threads: 4
+    load:
+      arrival: poisson
+      target_qps: 120.0
+      concurrency: 32
+      queue_limit: 512
+    mps:
+      active_thread_percentage: 100
+      priority: NORMAL
+  b:
+    role: low
+    workload: image_inference
+    mode: offline
+    model:
+      name: resnet50
+      input_size: 224
+      precision: fp16
+      batch_size: 64
+      input_pool_size: 32
+      cpu_threads: 4
+    load:
+      arrival: closed_loop
+      target_qps: null
+      concurrency: 4
+      queue_limit: 64
+    mps:
+      active_thread_percentage: 50
+      priority: NORMAL
+      pinned_device_mem_limit_fraction: 0.5

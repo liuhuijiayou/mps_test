@@ -1,0 +1,8 @@
+# Pinned, exact versions. torch / torchvision are installed separately from the
+# PyTorch wheel index (see docker/Dockerfile) because they need that index URL.
+#
+# In-container deps (beyond torch/torchvision):
+PyYAML==6.0.2
+numpy==1.26.4
+# Test deps (also useful inside the image for integration tests):
+pytest==8.3.4

@@ -1,0 +1,43 @@
+# 由 tools/gen_cases.py 生成，可手工微调；字段含义见 docs/CONFIG.zh-CN.md
+case:
+  id: MEM-HL-50
+  family: memory
+  mode: mps_concurrent
+  description: 仅低优 50% 显存上限：低优在边界失败；高优在物理空闲足够时可超过 50%，证明未被同样限额（不宣称低优驻留时高优必然可申请整卡）
+  reference:
+  - B0
+  - B2
+  expect:
+    client_b_quota_oom: true
+    high_exceeds_half: true
+    peer_correctness: true
+clients:
+  a:
+    role: high
+    workload: image_inference
+    mode: online
+    model: &id001
+      name: resnet18
+      input_size: 224
+      precision: fp16
+      batch_size: 8
+      input_pool_size: 64
+      cpu_threads: 4
+    load: &id002
+      arrival: poisson
+      target_qps: 120.0
+      concurrency: 32
+      queue_limit: 512
+    mps:
+      active_thread_percentage: 100
+      priority: NORMAL
+  b:
+    role: low
+    workload: image_inference
+    mode: online
+    model: *id001
+    load: *id002
+    mps:
+      active_thread_percentage: 50
+      priority: BELOW_NORMAL
+      pinned_device_mem_limit_fraction: 0.5

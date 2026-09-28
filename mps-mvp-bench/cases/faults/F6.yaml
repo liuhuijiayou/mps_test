@@ -1,0 +1,60 @@
+# 由 tools/gen_cases.py 生成，可手工微调；字段含义见 docs/CONFIG.zh-CN.md
+case:
+  id: F6
+  family: fault
+  mode: mps_concurrent
+  description: F6 GPU work 在途时直接 SIGKILL（默认关闭）。witness=A 真实在线推理，被注入=B
+  reference:
+  - B0
+  - B2
+  fault: F6
+  enabled: false
+clients:
+  a:
+    role: high
+    workload: image_inference
+    mode: online
+    model:
+      name: resnet18
+      input_size: 224
+      precision: fp16
+      batch_size: 8
+      input_pool_size: 64
+      cpu_threads: 4
+    load:
+      arrival: poisson
+      target_qps: 120.0
+      concurrency: 32
+      queue_limit: 512
+    mps:
+      active_thread_percentage: 100
+      priority: NORMAL
+  b:
+    role: low
+    workload: image_inference
+    mode: offline
+    model:
+      name: resnet50
+      input_size: 224
+      precision: fp16
+      batch_size: 64
+      input_pool_size: 32
+      cpu_threads: 4
+    load:
+      arrival: closed_loop
+      target_qps: null
+      concurrency: 4
+      queue_limit: 64
+    mps:
+      active_thread_percentage: 50
+      priority: BELOW_NORMAL
+      pinned_device_mem_limit_fraction: 0.5
+faults:
+  enabled: true
+  allow_disruptive: false
+  inject_after_s: 20
+  observe_window_s: 30
+  repeats: 3
+  recovery_levels:
+  - R1
+  - R2

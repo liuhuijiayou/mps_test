@@ -1,0 +1,34 @@
+# 由 tools/gen_cases.py 生成，可手工微调；字段含义见 docs/CONFIG.zh-CN.md
+case:
+  id: MEM-NONMPS-control
+  family: memory
+  mode: nonmps_concurrent
+  description: 非 MPS 对照：仅在物理余量足够时验证跨过相同比例不会被 MPS 配额拦截，不为测 OOM 耗尽整卡
+  reference:
+  - B0
+  - B2
+  expect:
+    client_a_quota_oom: false
+clients:
+  a:
+    role: high
+    workload: image_inference
+    mode: online
+    model: &id001
+      name: resnet18
+      input_size: 224
+      precision: fp16
+      batch_size: 8
+      input_pool_size: 64
+      cpu_threads: 4
+    load: &id002
+      arrival: poisson
+      target_qps: 120.0
+      concurrency: 32
+      queue_limit: 512
+  b:
+    role: high
+    workload: image_inference
+    mode: online
+    model: *id001
+    load: *id002

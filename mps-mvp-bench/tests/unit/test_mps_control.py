@@ -90,22 +90,111 @@ def test_parse_server_state():
     assert mpsmod.parse_server_state("nothing here") is None
 
 
-def test_parse_help_detects_commands_and_static_partitioning():
+def test_parse_help_detects_commands():
     legacy = ("get_server_list\nget_client_list\nterminate_client <server pid> <client pid>\n"
               "set_default_active_thread_percentage\nquit\n")
     caps = mpsmod.parse_help(legacy)
     assert caps.has("terminate_client")
     assert not caps.static_partitioning
 
-    modern = legacy + "create_device_partition <dev> <sm>\nlist_device_partition\n"
+    # Real Legacy-MPS-v2 spelling, not the non-existent create_device_partition.
+    modern = legacy + "sm_partition add <device UUID> <chunks>\nlspart\n"
     caps2 = mpsmod.parse_help(modern)
     assert caps2.static_partitioning
+    assert caps2.has("sm_partition") and caps2.has("lspart")
 
 
-def test_help_absence_means_unsupported_not_emulated():
+def test_help_silence_is_not_a_verdict():
+    """help is advisory only: its absence must NOT be treated as unsupported.
+
+    R580 does not reliably advertise static partitioning, so the authoritative
+    answer comes from probe_static_partitioning() actually running the command.
+    """
     caps = mpsmod.parse_help("get_server_list\nquit\n")
     assert caps.static_partitioning is False
     assert not caps.has("terminate_client")
+    # The controller exposes this only as an explicitly-named weak signal.
+    assert hasattr(mpsmod.MpsController, "static_partitioning_advertised")
+    assert hasattr(mpsmod, "probe_static_partitioning")
+
+
+def test_client_env_binds_real_partition_variable():
+    """Binding must use CUDA_MPS_SM_PARTITION with the runtime partition ID.
+
+    A logical label like "partA" means nothing to the driver, so it is recorded
+    separately and must never be used as the binding value.
+    """
+    real_id = "GPU-74d43ed3-cdf7-e667-3644-bf5b4f46ed65/Dx4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    env = mpsmod.client_env("/p", static_partition_id=real_id, static_partition_label="partA")
+    assert env["CUDA_MPS_SM_PARTITION"] == real_id
+    assert env["MPS_BENCH_STATIC_PARTITION_LABEL"] == "partA"
+
+
+def test_client_env_rejects_label_as_partition_id():
+    # "partA" is not a partition ID; accepting it would silently produce an
+    # unbound (i.e. non-isolated) client.
+    with pytest.raises(mpsmod.MpsError):
+        mpsmod.client_env("/p", static_partition_id="partA")
+
+
+# ------------------------- static partitioning parsing ------------------------- #
+
+def test_parse_partition_id_from_add_output():
+    out = "GPU-74d43ed3-cdf7-e667-3644-bf5b4f46ed65/Dx4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n"
+    assert mpsmod.parse_partition_id(out) == out.strip()
+
+
+def test_parse_partition_id_none_on_failure():
+    # Oversubscription: the documented failure message carries no ID.
+    fail = ("Failed to fulfill the requested SM partition of 28 chunks, "
+            "error CUDA_ERROR_INVALID_RESOURCE_CONFIGURATION\n")
+    assert mpsmod.parse_partition_id(fail) is None
+    assert mpsmod.parse_partition_id("") is None
+    assert "CUDA_ERROR_INVALID_RESOURCE_CONFIGURATION" in \
+        mpsmod.partition_failure_reason(fail, "")
+
+
+def test_parse_lspart_reads_real_sm_counts():
+    out = ("GPU                Partition   free   used   free  used  clients\n"
+           "                               chunk  chunk  SM    SM\n"
+           "GPU-74d43ed3       -           0      14     0     56    -\n"
+           "GPU-74d43ed3       Dx4AAAAA    -      7      -     28    Yes\n"
+           "GPU-74d43ed3       Ex4BBBBB    -      7      -     28    No\n")
+    rows = mpsmod.parse_lspart(out)
+    parts = [r for r in rows if r.partition]
+    assert len(parts) == 2
+    assert [r.used_sms for r in parts] == [28, 28]
+    assert [r.used_chunks for r in parts] == [7, 7]
+    assert parts[0].in_use is True and parts[1].in_use is False
+
+
+def test_find_partition_row_matches_on_component():
+    out = ("GPU-74d43ed3       Dx4AAAAA    -      7      -     28    Yes\n")
+    rows = mpsmod.parse_lspart(out)
+    full = "GPU-74d43ed3-cdf7-e667-3644-bf5b4f46ed65/Dx4AAAAA"
+    assert mpsmod.find_partition_row(rows, full).used_sms == 28
+    assert mpsmod.find_partition_row(rows, "GPU-x/ZZZZZZZZ") is None
+
+
+def test_sm_count_must_be_whole_chunks():
+    """28 SM at 4 SM/chunk is 7 chunks; 30 SM is not expressible and must raise
+    rather than be silently rounded."""
+    assert mpsmod.MpsController._resolve_chunks({"sm_count": 28}, 4) == (7, 28)
+    assert mpsmod.MpsController._resolve_chunks({"chunks": 7}, 4) == (7, 28)
+    with pytest.raises(mpsmod.MpsError):
+        mpsmod.MpsController._resolve_chunks({"sm_count": 30}, 4)
+    with pytest.raises(mpsmod.MpsError):
+        mpsmod.MpsController._resolve_chunks({}, 4)
+
+
+def test_create_partitions_refuses_without_static_mode():
+    """Without the daemon's -S flag the commands cannot work, so we must report
+    unsupported instead of issuing them and misreading the result."""
+    ctl = mpsmod.MpsController(pipe_dir="/tmp/x", log_dir="/tmp/y",
+                               gpu_uuid="GPU-1234")
+    res = ctl.create_partitions([{"name": "partA", "sm_count": 28}])
+    assert res["supported"] is False
+    assert "-S" in res["reason"]
 
 
 # ------------------------- PID mapping ------------------------- #

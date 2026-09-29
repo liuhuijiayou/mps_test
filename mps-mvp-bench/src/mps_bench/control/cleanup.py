@@ -1,8 +1,12 @@
 """Idempotent cleanup: clients first, then only our own MPS, logs always saved.
 
 Order matters: we stop clients (cooperative drain, then graceful stop) before
-touching MPS, and we persist logs *before* removing anything. Every step is
-safe to call twice.
+touching MPS, and we persist logs *before* removing anything. Within the MPS
+step the order is equally strict -- static SM partitions are released *after*
+clients are gone (the driver refuses to remove a partition still in use) and
+*before* the daemon is stopped (afterwards the control interface is gone and
+the release could no longer be issued or proven). Every step is safe to call
+twice.
 """
 
 from __future__ import annotations
@@ -78,6 +82,19 @@ def cleanup(docker: Optional[DockerClient],
                 report.errors.append(f"{name}: 删除失败")
 
     if mps is not None:
+        # Order matters: containers are already stopped above, so clients are
+        # gone and `sm_partition rm` can succeed. Partitions must be released
+        # BEFORE the daemon is stopped -- once the daemon is gone the control
+        # interface is unreachable and the release can no longer be proven.
+        try:
+            destroyed = mps.destroy_partitions()
+            report.record("mps_partitions", **(destroyed if isinstance(destroyed, dict) else {}))
+            if isinstance(destroyed, dict) and destroyed.get("errors"):
+                report.errors.append(f"静态分区未能全部释放: {destroyed['errors']}")
+        except Exception as exc:
+            report.record("mps_partitions_failed", error=str(exc))
+            report.errors.append(f"释放静态分区失败: {exc}")
+
         # Only our own instance; no global `quit`.
         if getattr(mps, "owns_daemon", False):
             result = mps.stop_daemon()
@@ -86,11 +103,6 @@ def cleanup(docker: Optional[DockerClient],
             report.record("mps_stop_skipped",
                           reason="本实验不拥有该 MPS 实例，不执行 quit")
             report.notes.append("MPS 实例未由本 run 启动，不停止（避免影响他人）")
-        try:
-            destroyed = mps.destroy_partitions()
-            report.record("mps_partitions", **(destroyed if isinstance(destroyed, dict) else {}))
-        except Exception as exc:
-            report.record("mps_partitions_failed", error=str(exc))
 
     return report
 

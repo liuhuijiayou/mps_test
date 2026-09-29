@@ -52,6 +52,9 @@ clients:
 mps:
   static_partitioning:
     enabled: true
+    # 分区单位是 chunk 而非 SM。Legacy MPS v2 在 pre-Hopper dGPU（A30=Ampere）
+    # 上 1 chunk = 4 SM，因此 28 SM = 7 chunk。sm_count 必须是 chunk 粒度的整数倍，
+    # 否则直接报错而不是静默取整。实际 SM 数以 lspart 回读为准写入证据。
     partitions:
     - name: partA
       sm_count: 28

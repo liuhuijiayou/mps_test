@@ -1,12 +1,23 @@
 """Read-only preflight -> capability.json.
 
 Rules encoded here:
-* preflight never creates partitions, never changes compute mode, never starts a
-  CUDA context and never starts MPS.
+* preflight never changes compute mode and never touches the user's own MPS
+  instance.
 * "found the binary / found the symbol" is NOT a verified capability. Anything
   that can only be proven by executing something is recorded as `unknown` with
   `verify_by: smoke`.
 * every entry carries raw evidence so a human can re-check the conclusion.
+
+The one deliberate exception
+----------------------------
+`mps_static_partitioning` cannot be settled by inspection. The control binary's
+`help` text on R580 does not reliably advertise the feature, so parsing it
+yields false negatives and silently SKIPs HH-S. We therefore *actively probe*:
+a throwaway MPS daemon is started in its own pipe directory under
+`paths.probe_dir`, a 1-chunk partition is requested, and the verdict comes from
+the return value. The probe instance is isolated from any pre-existing MPS and
+is always torn down. Set `mps.static_partitioning.probe=false` to skip it, in
+which case the capability is reported as `unknown`, never as `supported`.
 """
 
 from __future__ import annotations
@@ -22,7 +33,7 @@ from typing import Any, Dict, List, Optional
 from .. import __version__
 from .exec import CommandLog, run, which
 from .gpu import GpuQuery
-from .mps import MpsController
+from .mps import MpsController, probe_static_partitioning
 from .safety import check_compute_mode, check_gpu_processes
 
 SUPPORTED = "supported"
@@ -237,13 +248,42 @@ def run_preflight(cfg, log: Optional[CommandLog] = None) -> PreflightReport:
             "help_raw_tail": caps.raw[-4000:],
             "note": "以本机 help 为准，不把最新 MPS v3 命令硬套到 R580",
         }))
-        report.add(Capability("mps_static_partitioning",
-                              SUPPORTED if caps.static_partitioning else UNSUPPORTED,
-                              "help 中提供静态分区命令" if caps.static_partitioning else
-                              "help 未提供静态分区命令；HH-S 用例 SKIP，"
-                              "禁止用 ACTIVE_THREAD_PERCENTAGE/亲和性/MIG 冒充",
-                              {"help_matched": caps.static_partitioning},
-                              verify_by="smoke" if caps.static_partitioning else None))
+        # Actively probe: `help` is not authoritative on R580. See module docstring.
+        if not cfg["mps.static_partitioning.probe"]:
+            report.add(Capability("mps_static_partitioning", UNKNOWN,
+                                  "mps.static_partitioning.probe=false，未做实际探测；"
+                                  "不据此判定支持与否",
+                                  {"help_mentions": caps.static_partitioning},
+                                  verify_by="smoke"))
+        elif not cfg["gpu.uuid"]:
+            report.add(Capability("mps_static_partitioning", UNKNOWN,
+                                  "未指定 gpu.uuid，无法对具体设备执行分区探测",
+                                  {"help_mentions": caps.static_partitioning},
+                                  verify_by="user-input"))
+        else:
+            probe = probe_static_partitioning(
+                binary=cfg["mps.control_binary"], gpu_uuid=cfg["gpu.uuid"],
+                probe_root=cfg["paths.probe_dir"], log=log)
+            supported = bool(probe.get("supported"))
+            report.add(Capability(
+                "mps_static_partitioning",
+                SUPPORTED if supported else UNSUPPORTED,
+                probe.get("reason", "") if supported else
+                (probe.get("reason", "") + "；HH-S 用例 SKIP，"
+                 "禁止用 ACTIVE_THREAD_PERCENTAGE/亲和性/MIG 冒充"),
+                {"mps_static_partitioning": {
+                    "supported": supported,
+                    "commands": probe.get("commands", []),
+                    "reason": probe.get("reason", ""),
+                 },
+                 "probe": {k: v for k, v in probe.items()
+                           if k not in ("supported", "commands", "reason")},
+                 "help_mentions": caps.static_partitioning,
+                 "note": "结论来自实际执行 sm_partition，而非 help 文本"}))
+            if supported and probe.get("probe_partition_removed") is False:
+                report.blocking.append(
+                    "静态分区探测后未能释放探测分区，GPU 可能仍处于被切分状态："
+                    f"{probe.get('probe_cleanup_errors')}")
         existing = ctl.daemon_present()
         report.add(Capability("mps_pipe_free",
                               UNSUPPORTED if existing and not cfg["mps.allow_adopt_existing"]

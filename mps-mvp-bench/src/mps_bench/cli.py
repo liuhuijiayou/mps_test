@@ -143,8 +143,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for item in report.blocking:
             print(f"  - {item}")
         return 1
-    print("\npreflight 只读完成：容器设备透传 / MPS 接入 / 分区创建等能力标记为 unknown，"
-          "需由 smoke 执行证明。")
+    print("\npreflight 完成：静态 SM 分区已通过实际执行分区命令判定（非 help 文本）；"
+          "容器设备透传 / MPS 接入等能力标记为 unknown，需由 smoke 执行证明。")
     return 0
 
 
@@ -183,8 +183,21 @@ def _prepare_run(args: argparse.Namespace, cfg: cfgmod.LoadedConfig,
     return rd, manifest
 
 
+def _static_partition_probe(pre: Any) -> Dict[str, Any]:
+    """Pull the active-probe evidence out of the preflight report."""
+    for cap in pre.capabilities:
+        if cap.name == "mps_static_partitioning":
+            evidence = cap.evidence if isinstance(cap.evidence, dict) else {}
+            raw = evidence.get("probe")
+            probe: Dict[str, Any] = dict(raw) if isinstance(raw, dict) else {}
+            probe["status"] = cap.status
+            probe["detail"] = cap.detail
+            return probe
+    return {}
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    from .runner import Runner  # local import: keeps `schema`/`plan` light
+    from .runner import Runner, StaticPartitioningUnavailable  # local import: keeps `schema`/`plan` light
 
     cases = _expand(args)
     if not cases:
@@ -215,6 +228,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         for item in pre.blocking:
             print(f"  - {item}")
         return 1
+    static_probe = _static_partition_probe(pre)
 
     collector = None
     lock = None
@@ -243,19 +257,48 @@ def cmd_run(args: argparse.Namespace) -> int:
             gate_disruptive(cfg["case.fault"], args.allow_disruptive,
                             cfg["faults.allow_disruptive"], args.confirm_gpu_uuid,
                             cfg["gpu.uuid"])
-            runner = Runner(cfg, rd, log=log, dry_run=args.dry_run)
+            runner = Runner(cfg, rd, log=log, dry_run=args.dry_run,
+                            capability_report=static_probe)
             total_bytes = None
             if not args.dry_run:
                 gpu = runner.gpu.get(cfg["gpu.uuid"])
                 total_bytes = gpu.memory_total_bytes if gpu else None
+
+            # A case that needs static SM partitioning on a machine that cannot
+            # provide it is SKIPped with the concrete reason. It is never
+            # downgraded to ACTIVE_THREAD_PERCENTAGE / affinity / MIG.
+            if cfg["mps.static_partitioning.enabled"] and not args.dry_run \
+                    and static_probe.get("status") == "unsupported":
+                reason = static_probe.get("detail") or "静态 SM 分区不可用"
+                print(f"[{case.full_id}] SKIP：{reason}")
+                results.append({"case": case.full_id, "case_file": case.case_file,
+                                "overrides": case.overrides,
+                                "config_hash": cfg.hash(),
+                                "status": "SKIP", "skip_reason": reason,
+                                "static_partition_probe": static_probe,
+                                "rounds": []})
+                continue
+
             case_rounds = []
-            for round_index in range(cfg["measure.repeats"]):
-                print(f"[{case.full_id}] round {round_index + 1}/{cfg['measure.repeats']}")
-                round_result = runner.run_round(case.full_id, round_index, collector,
-                                                total_bytes)
-                case_rounds.append(round_result)
-                if args.dry_run:
-                    break
+            try:
+                for round_index in range(cfg["measure.repeats"]):
+                    print(f"[{case.full_id}] round {round_index + 1}/{cfg['measure.repeats']}")
+                    round_result = runner.run_round(case.full_id, round_index, collector,
+                                                    total_bytes)
+                    case_rounds.append(round_result)
+                    if args.dry_run:
+                        break
+            except StaticPartitioningUnavailable as exc:
+                # Discovered at run time (e.g. the partition could not be
+                # carved). Report it, keep whatever rounds already completed.
+                print(f"[{case.full_id}] SKIP：{exc}")
+                results.append({"case": case.full_id, "case_file": case.case_file,
+                                "overrides": case.overrides,
+                                "config_hash": cfg.hash(),
+                                "status": "SKIP", "skip_reason": str(exc),
+                                "static_partition_probe": static_probe,
+                                "rounds": []})
+                continue
             results.append({"case": case.full_id, "case_file": case.case_file,
                             "overrides": case.overrides,
                             "config_hash": cfg.hash(),

@@ -23,7 +23,8 @@ from .control import docker as dockermod
 from .control.cleanup import cleanup as do_cleanup
 from .control.exec import CommandLog, run
 from .control.gpu import GpuQuery
-from .control.mps import MpsController, client_env, memory_limit_bytes
+from .control.mps import (DGPU_PRE_HOPPER_CHUNK_SMS, MpsController, client_env,
+                          memory_limit_bytes)
 from .control.pidmap import resolve_worker_host_pid
 from .control.safety import SafetyError, check_gpu_processes
 from .reporting import stats as statsmod
@@ -32,6 +33,14 @@ from .telemetry.collector import Collector, rolling_summary
 
 CONTAINER_RESULTS_MOUNT = "/results"
 ASSETS_MOUNT = "/assets"
+
+
+class StaticPartitioningUnavailable(RuntimeError):
+    """Raised when a case needs static SM partitioning and it cannot be had.
+
+    The caller turns this into a SKIP. It must never be downgraded into a run
+    that silently uses ACTIVE_THREAD_PERCENTAGE / affinity / MIG instead.
+    """
 
 
 @dataclass
@@ -68,11 +77,14 @@ class RoundResult:
 
 class Runner:
     def __init__(self, cfg: cfgmod.LoadedConfig, run_dir: RunDirectory,
-                 log: Optional[CommandLog] = None, dry_run: bool = False):
+                 log: Optional[CommandLog] = None, dry_run: bool = False,
+                 capability_report: Optional[Dict[str, Any]] = None):
         self.cfg = cfg
         self.run_dir = run_dir
         self.log = log or CommandLog()
         self.dry_run = dry_run
+        # Evidence from preflight's active probe (e.g. measured SM-per-chunk).
+        self.capability_report = capability_report or {}
         self.run_id = run_dir.run_id
         self.gpu_uuid = cfg["gpu.uuid"]
         self.docker = dockermod.DockerClient(binary=cfg["docker.binary"],
@@ -126,20 +138,75 @@ class Runner:
             return {"enabled": False,
                     "note": "非 MPS 对照：客户端不设置 CUDA_MPS_PIPE_DIRECTORY，"
                             "避免误连默认 pipe；也不停止其他实验/业务的 MPS"}
+        static_enabled = bool(self.cfg["mps.static_partitioning.enabled"])
         ctl = MpsController(pipe_dir=self.cfg["paths.mps_pipe_dir"],
                             log_dir=self.cfg["paths.mps_log_dir"],
                             binary=self.cfg["mps.control_binary"],
                             gpu_uuid=self.gpu_uuid, log=self.log)
+        # `-S` can only be chosen at launch, so the decision is made here.
         info = ctl.start_daemon(timeout_s=self.cfg["mps.start_timeout_s"],
-                                allow_adopt_existing=self.cfg["mps.allow_adopt_existing"])
+                                allow_adopt_existing=self.cfg["mps.allow_adopt_existing"],
+                                static_partitioning=static_enabled)
         self.mps = ctl
         partitions: Dict[str, Any] = {"requested": False}
-        if self.cfg["mps.static_partitioning.enabled"]:
-            partitions = ctl.create_partitions(self.cfg["mps.static_partitioning.partitions"])
+        if static_enabled:
+            partitions = ctl.create_partitions(
+                self.cfg["mps.static_partitioning.partitions"],
+                device=self.gpu_uuid,
+                sms_per_chunk=self._sms_per_chunk())
             partitions["requested"] = True
+            if not partitions.get("supported"):
+                # Explicit failure. Never fall back to ACTIVE_THREAD_PERCENTAGE:
+                # the case must be reported as SKIP instead of silently running
+                # an un-isolated workload under an "SM isolated" label.
+                raise StaticPartitioningUnavailable(
+                    partitions.get("reason", "静态 SM 分区创建失败（无具体原因）"))
         self.event("mps_started", "MPS start", **{"daemon": info, "partitions": partitions})
         return {"enabled": True, "daemon": info, "partitions": partitions,
+                "static_partition": self._static_partition_evidence(partitions),
                 "capabilities": ctl.capabilities().commands}
+
+    def _sms_per_chunk(self) -> int:
+        """SM-per-chunk granularity for this device.
+
+        Prefer an explicit config value, else the measured value recorded by
+        preflight's probe, else the documented Legacy-MPS-v2 pre-Hopper dGPU
+        value. We never derive it from the marketing name.
+        """
+        configured = self.cfg["mps.static_partitioning.sms_per_chunk"]
+        if configured:
+            return int(configured)
+        observed = (self.capability_report or {}).get("sms_per_chunk_observed")
+        if observed:
+            return int(observed)
+        return DGPU_PRE_HOPPER_CHUNK_SMS
+
+    def _static_partition_evidence(self, partitions: Dict[str, Any]) -> Dict[str, Any]:
+        """Case-level evidence block: what was asked for vs what the GPU reports."""
+        if not partitions.get("requested"):
+            return {"enabled": False}
+        created = partitions.get("created", [])
+        evidence: Dict[str, Any] = {
+            "enabled": bool(partitions.get("supported")),
+            "device": partitions.get("device"),
+            "sms_per_chunk": partitions.get("sms_per_chunk"),
+            "commands": [c.get("command") for c in created],
+            "lspart": partitions.get("lspart_rows"),
+        }
+        for index, record in enumerate(created):
+            key = f"partition_{chr(ord('a') + index)}"
+            evidence[key] = {
+                "name": record.get("name"),
+                "partition_id": record.get("partition_id"),
+                "requested_chunks": record.get("requested_chunks"),
+                "requested_sm_count": record.get("requested_sm_count"),
+                # The authoritative number comes from `lspart`, not from config.
+                "sm_count": record.get("observed_sm_count"),
+                "sm_count_source": ("lspart" if record.get("observed_sm_count") is not None
+                                    else "unknown"),
+                "note": record.get("observed_note"),
+            }
+        return evidence
 
     # ------------------------------------------------------------------ #
     # container launch
@@ -156,13 +223,26 @@ class Runner:
             if not total_bytes:
                 raise SafetyError("无法获取运行时物理总显存，拒绝按比例生成显存配额")
             limit_bytes = memory_limit_bytes(total_bytes, float(fraction))
+        label = cfg[f"{p}.mps.static_partition"]
+        partition_id = None
+        if label is not None:
+            # Resolve the case's logical label to the opaque ID the daemon
+            # actually returned. A missing ID means the binding cannot be made,
+            # and running anyway would produce an unisolated result wearing an
+            # "SM isolated" label.
+            partition_id = self.mps.partition_id(label) if self.mps is not None else None
+            if partition_id is None:
+                raise StaticPartitioningUnavailable(
+                    f"client {slot} 声明绑定静态分区 {label!r}，但运行时没有对应的分区 ID；"
+                    "拒绝在未绑定的情况下继续（否则结果不是 SM 隔离的）")
         env = client_env(pipe_dir=cfg["paths.mps_pipe_dir"],
                          log_dir=cfg["paths.mps_log_dir"],
                          active_thread_percentage=cfg[f"{p}.mps.active_thread_percentage"],
                          priority=cfg[f"{p}.mps.priority"],
                          pinned_device_mem_limit_bytes=limit_bytes,
                          gpu_uuid=self.gpu_uuid,
-                         static_partition=cfg[f"{p}.mps.static_partition"])
+                         static_partition_id=partition_id,
+                         static_partition_label=label)
         env["MPS_BENCH_MPS_MODE"] = "enabled"
         return env, limit_bytes
 
@@ -328,6 +408,16 @@ class Runner:
             if not evidence["mps_attachment_proven"]:
                 evidence["mps_attachment_note"] = (
                     "未能证明该 worker 已接入 MPS：仅环境变量/daemon 存在/GPU busy 均不算证据")
+            # client <-> partition binding, as actually passed to the container
+            bound_id = handle.env.get("CUDA_MPS_SM_PARTITION")
+            if bound_id:
+                evidence["static_partition_binding"] = {
+                    "label": handle.env.get("MPS_BENCH_STATIC_PARTITION_LABEL"),
+                    "partition_id": bound_id,
+                    "env_var": "CUDA_MPS_SM_PARTITION",
+                    "worker_pid": handle.worker_host_pid,
+                    "container": handle.container,
+                }
         else:
             evidence["mps"] = {"enabled": False}
             # A non-MPS control must demonstrate the absence of MPS env vars.
@@ -476,6 +566,11 @@ class Runner:
                                     os.path.join("workload_logs", f"{name}.log"), text),
                                 stop_timeout_s=int(cfg["measure.drain_timeout_s"]) + 10)
             self.event("round_cleanup", "cleanup", round_index=round_index, **report.as_dict())
+            # Partition release status belongs in the case evidence, not only in
+            # the cleanup log, because "auto-released" is part of the acceptance.
+            for step in report.steps:
+                if step.get("step") in ("mps_partitions", "mps_partitions_failed"):
+                    result.mps_evidence.setdefault("static_partition", {})["cleanup"] = step
             self.run_dir.copy_mps_logs(cfg["paths.mps_log_dir"])
             self.started_containers = [c for c in self.started_containers
                                        if c not in [h.container for h in handles]]

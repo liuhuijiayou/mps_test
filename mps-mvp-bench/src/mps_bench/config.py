@@ -61,6 +61,8 @@ SCHEMA: Dict[str, Field] = {
     "paths.mps_pipe_dir": _f(str, "/tmp/mps-mvp-bench/pipe",
                              stage="mps-start", doc="本实验专属 MPS pipe 目录，禁止用默认 /tmp/nvidia-mps"),
     "paths.mps_log_dir": _f(str, "/tmp/mps-mvp-bench/log", stage="mps-start"),
+    "paths.probe_dir": _f(str, "/tmp/mps-mvp-bench/probe", stage="preflight",
+                          doc="能力探测用的临时 MPS 实例目录，与正式 pipe 目录隔离"),
     "paths.model_mount": _f((str, type(None)), None,
                             doc="宿主机权重/输入目录，容器内挂到 /assets（只读）"),
 
@@ -96,8 +98,16 @@ SCHEMA: Dict[str, Field] = {
     "mps.stop_timeout_s": _f((int, float), 60, unit="s", min=1, max=600, stage="cleanup"),
     "mps.static_partitioning.enabled": _f(bool, False, stage="mps-start",
                                           doc="静态 SM 分区用例专用；与 active_thread_percentage 分开配置"),
+    "mps.static_partitioning.probe": _f(bool, True, stage="preflight",
+                                        doc="preflight 是否启动一个独立临时 MPS 实例实际执行分区命令。"
+                                            "false 时能力记为 unknown，不会记为 supported"),
+    "mps.static_partitioning.sms_per_chunk": _f((int, type(None)), None, unit="SM", min=1,
+                                                stage="mps-start",
+                                                doc="分区粒度（每 chunk 的 SM 数）。留空则取 preflight "
+                                                    "探测实测值；Legacy MPS v2在 pre-Hopper dGPU 为 4"),
     "mps.static_partitioning.partitions": _f(list, [], stage="mps-start",
-                                             doc="每个元素 {name, sm_count}；不支持则用例 SKIP"),
+                                             doc="每个元素 {name, chunks} 或 {name, sm_count}；"
+                                                 "sm_count 必须是 chunk 粒度的整数倍；不支持则用例 SKIP"),
     "compute_mode.require_default_for_nonmps": _f(bool, True, stage="preflight",
                                                   doc="非 MPS 双进程基线要求允许多进程；EXCLUSIVE_PROCESS 下基线失败不得算作 MPS 收益"),
     "compute_mode.allow_change": _f(bool, False, stage="preflight",

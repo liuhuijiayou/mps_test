@@ -1,0 +1,87 @@
+meta:
+  project: mps-mvp-bench
+  notes: A30 单卡 MPS MVP 验证
+paths:
+  results_dir: results
+  mps_pipe_dir: /tmp/mps-mvp-bench/pipe
+  mps_log_dir: /tmp/mps-mvp-bench/log
+  model_mount: null
+gpu:
+  uuid: GPU-7fde6074-caa2-30a7-d1ff-f5a645f721a8
+  expect_total_memory_mib: 24576
+docker:
+  binary: docker
+  image: mps-mvp-bench:local
+  runtime_args:
+  - --runtime=nvidia
+  - --gpus
+  - device=GPU-7fde6074-caa2-30a7-d1ff-f5a645f721a8
+  extra_args: []
+  user: null
+  shm_size: 1g
+  privileged: false
+  mount_docker_socket: false
+  pull: false
+mps:
+  control_binary: nvidia-cuda-mps-control
+  manage_on_host: true
+  allow_adopt_existing: false
+  static_partitioning:
+    enabled: false
+    partitions: []
+compute_mode:
+  require_default_for_nonmps: true
+  allow_change: false
+measure:
+  profile: standard
+  warmup_s: 30
+  duration_s: 120
+  repeats: 5
+  drain_timeout_s: 30
+  interleave: ABBA
+  seed: 20251001
+  request_timeout_s: 5.0
+  total_budget_s: 21600
+  tolerance: 0.001
+  min_samples_p999: 100000
+slo:
+  latency_p99_ms: null
+  max_latency_delta: null
+  min_throughput_delta: null
+  max_error_rate: 0.0
+  reference: B2
+telemetry:
+  enabled: true
+  sample_interval_s: 1.0
+  nvidia_smi_binary: nvidia-smi
+  dcgmi_binary: dcgmi
+  require_sm_metrics: true
+  dcgm_fields:
+  - 1002
+  - 1003
+  - 1005
+  allow_degraded: false
+  nsight:
+    enabled: false
+memory:
+  probe_step_mib: 256
+  probe_touch: true
+  safety_margin_mib: 1024
+  expect_nonmps_no_quota: true
+faults:
+  enabled: false
+  allow_disruptive: false
+  inject_after_s: 20
+  observe_window_s: 30
+  repeats: 3
+  drain_timeout_s: 15
+  recovery_timeout_s: 120
+  long_kernel_ms: 2000
+  recovery_levels:
+  - R1
+  - R2
+safety:
+  abort_on_foreign_gpu_process: true
+  health_check_between_rounds: true
+  stop_on_unhealthy: true
+  lock_dir: /tmp/mps-mvp-bench/locks

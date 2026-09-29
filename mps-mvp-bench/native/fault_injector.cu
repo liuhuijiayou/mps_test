@@ -1,3 +1,4 @@
+#include <unistd.h>
 // fault_injector -- small standalone CUDA helper that triggers REAL device-side
 // faults, so a CPU-side exception is never passed off as a device error.
 //

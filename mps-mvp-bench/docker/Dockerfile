@@ -72,18 +72,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Record what was actually installed so the manifest can cite real versions
 # instead of trusting the nvidia-smi CUDA field.
-RUN python - <<'PY' > /opt/mps-bench/build-versions.json
-import json, sys
-info = {"python": sys.version}
-try:
-    import torch, torchvision
-    info.update({"torch": torch.__version__, "torch_cuda_build": torch.version.cuda,
-                 "torchvision": torchvision.__version__})
-except Exception as exc:
-    info["torch_error"] = str(exc)
-print(json.dumps(info, indent=2))
-PY
-
+RUN python -c 'import json,sys,torch,torchvision; print(json.dumps({"python":sys.version,"torch":torch.__version__,"torch_cuda_build":torch.version.cuda,"torchvision":torchvision.__version__}, indent=2))' > /opt/mps-bench/build-versions.json
 ENV PATH=/opt/mps-bench/bin:$PATH \
     MPS_BENCH_NATIVE_BIN=/opt/mps-bench/bin
 

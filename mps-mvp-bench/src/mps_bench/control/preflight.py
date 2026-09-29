@@ -147,13 +147,19 @@ def run_preflight(cfg, log: Optional[CommandLog] = None) -> PreflightReport:
             if "enabled" in mig:
                 report.blocking.append("目标 GPU 处于 MIG Enabled：本项目不使用 MIG 冒充 MPS 隔离")
 
-            cm = check_compute_mode(gpu, mps_mode=False,
-                                    require_default_for_nonmps=cfg["compute_mode.require_default_for_nonmps"])
-            report.add(Capability("compute_mode_allows_multiprocess",
-                                  SUPPORTED if cm["ok"] else UNSUPPORTED,
-                                  cm.get("reason", f"compute_mode={cm['compute_mode']}"), cm))
-            if not cm["ok"] and not cfg["compute_mode.allow_change"]:
-                report.blocking.append(cm.get("reason", "compute mode 不允许多进程"))
+            cm_ok, cm_reason = check_compute_mode(
+                gpu,
+                mps_mode=False,
+                require_default_for_nonmps=cfg["compute_mode.require_default_for_nonmps"],
+            )
+            report.add(Capability(
+                "compute_mode_allows_multiprocess",
+                SUPPORTED if cm_ok else UNSUPPORTED,
+                cm_reason or f"compute_mode={gpu.compute_mode}",
+                {"ok": cm_ok, "compute_mode": gpu.compute_mode, "reason": cm_reason},
+            ))
+            if not cm_ok and not cfg["compute_mode.allow_change"]:
+                report.blocking.append(cm_reason or "compute mode 不允许多进程")
 
             # SM count
             sm = gq.sm_count(gpu.uuid)

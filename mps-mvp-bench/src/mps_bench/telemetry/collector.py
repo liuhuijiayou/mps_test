@@ -152,13 +152,12 @@ class Collector:
             unavailable.append("nvml:all")
         else:
             nv_uuid = getattr(nv, "uuid", None)
-        if nv_uuid and self.gpu_uuid and nv_uuid != self.gpu_uuid:
-            # Never attribute another card's numbers to our target GPU.
-            unavailable.append(f"nvml:uuid_mismatch({nv_uuid})")
-        else:
-            row.update({k: v for k, v in nv.values.items() if k in CSV_COLUMNS})
-            row["throttle_reasons"] = nv.throttle_reasons
-            unavailable += [f"nvml:{k}" for k in nv.unavailable]
+            if nv_uuid and self.gpu_uuid and nv_uuid != self.gpu_uuid:
+                unavailable.append(f"nvml:uuid_mismatch({nv_uuid})")
+            else:
+                row.update({k: v for k, v in nv.values.items() if k in CSV_COLUMNS})
+                row["throttle_reasons"] = nv.throttle_reasons
+                unavailable += [f"nvml:{k}" for k in nv.unavailable]
 
         if self.status.dcgm_available:
             sample = self._dcgm_once()

@@ -1,3 +1,4 @@
+#include <unistd.h>
 // device_probe -- proves, by execution, what preflight can only mark `unknown`:
 //   * how many devices the container actually sees
 //   * each device's physical UUID, total memory and SM count

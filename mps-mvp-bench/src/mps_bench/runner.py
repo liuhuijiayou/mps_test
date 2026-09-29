@@ -207,8 +207,9 @@ class Runner:
         dockermod.requires_explicit_device(cfg["docker.runtime_args"], self.gpu_uuid)
         env, limit_bytes = self._client_env(slot, mps_mode, total_bytes)
 
-        host_results = os.path.join(self.run_dir.path, "workload_logs",
-                                    f"r{round_index}-{slot}")
+        host_results = os.path.abspath(
+            os.path.join(self.run_dir.path, "workload_logs", f"r{round_index}-{slot}")
+        )
         os.makedirs(host_results, exist_ok=True)
         mounts = [{"source": host_results, "target": CONTAINER_RESULTS_MOUNT}]
         if mps_mode:

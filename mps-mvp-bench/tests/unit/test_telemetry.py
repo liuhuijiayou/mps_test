@@ -73,6 +73,61 @@ def test_nvml_not_supported_fields_become_none():
     assert sample.memory_used_mib == 12000
 
 
+def test_nvml_core_query_excludes_optional_throttle_field():
+    """Regression: an unsupported optional field must not be able to fail the
+    whole query and blank out GPU util / memory for the entire run."""
+    assert "clocks.throttle_reasons.active" not in nvml.CORE_QUERY
+    for required in ("uuid", "utilization.gpu", "memory.used", "memory.free",
+                     "memory.total", "temperature.gpu", "power.draw", "clocks.sm"):
+        assert required in nvml.CORE_QUERY
+    assert nvml.QUERY == nvml.CORE_QUERY
+
+
+def test_nvml_parses_core_only_row_without_throttle_column():
+    """Driver 580.x rejecting the throttle field -> 8-column output must parse."""
+    row = "GPU-abc, 73, 9001, 15575, 24576, 58, 130.25, 1395"
+    sample = nvml.parse_query(row)
+    assert sample is not None
+    assert sample.gpu_util_device_busy_pct == 73
+    assert sample.memory_used_mib == 9001
+    assert sample.memory_free_mib == 15575
+    assert sample.memory_total_mib == 24576
+    assert sample.throttle_reasons is None
+    assert sample.unavailable == {}
+
+
+def test_nvml_falls_back_to_core_query_when_optional_field_rejected(monkeypatch):
+    calls = []
+
+    class _Res:
+        def __init__(self, ok, stdout=""):
+            self.ok = ok
+            self.stdout = stdout
+
+    def fake_run(argv, **kwargs):
+        fields = [a for a in argv if a.startswith("--query-gpu=")][0]
+        calls.append(fields)
+        if "throttle" in fields:
+            return _Res(False, "")  # driver rejects the whole query
+        return _Res(True, "GPU-abc, 73, 9001, 15575, 24576, 58, 130.25, 1395")
+
+    monkeypatch.setattr(nvml, "run", fake_run)
+    monkeypatch.setattr(nvml, "_throttle_supported", None)
+
+    sample = nvml.sample_device("GPU-abc")
+    assert sample is not None
+    assert sample.gpu_util_device_busy_pct == 73
+    assert sample.memory_used_mib == 9001
+    assert len(calls) == 2  # probed once, then fell back
+
+    # the unsupported field is not retried on every sample
+    calls.clear()
+    sample2 = nvml.sample_device("GPU-abc")
+    assert sample2.gpu_util_device_busy_pct == 73
+    assert len(calls) == 1
+    assert all("throttle" not in c for c in calls)
+
+
 def test_collector_refuses_to_substitute_gpu_util(monkeypatch):
     from mps_bench.telemetry.collector import Collector
     col = Collector(gpu_uuid="GPU-abc", csv_path="/tmp/does-not-matter.csv",

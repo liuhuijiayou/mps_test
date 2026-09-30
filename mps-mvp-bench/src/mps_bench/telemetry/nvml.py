@@ -11,8 +11,16 @@ from typing import Any, Dict, List, Optional
 
 from ..control.exec import CommandLog, run
 
-QUERY = ("uuid,utilization.gpu,memory.used,memory.free,memory.total,"
-         "temperature.gpu,power.draw,clocks.sm,clocks.throttle_reasons.active")
+# Core fields only. nvidia-smi fails the WHOLE query when a single field name is
+# unsupported by the installed driver, which previously took GPU util and memory
+# down with an optional throttle field. Core telemetry must never depend on a
+# non-core metric.
+CORE_QUERY = ("uuid,utilization.gpu,memory.used,memory.free,memory.total,"
+              "temperature.gpu,power.draw,clocks.sm")
+# Appended only as a best-effort probe; dropped permanently on first failure.
+OPTIONAL_FIELDS = ("clocks.throttle_reasons.active",)
+
+QUERY = CORE_QUERY  # kept as the public name used by callers/tests
 
 _SENTINELS = {"n/a", "[n/a]", "not supported", "[not supported]", "", "unknown"}
 
@@ -78,10 +86,32 @@ def parse_query(stdout: str) -> Optional[NvmlSample]:
     return None
 
 
+_throttle_supported: Optional[bool] = None
+
+
 def sample_device(uuid: str, binary: str = "nvidia-smi",
                   log: Optional[CommandLog] = None) -> Optional[NvmlSample]:
-    res = run([binary, "-i", uuid, f"--query-gpu={QUERY}", "--format=csv,noheader,nounits"],
-              timeout_s=10, log=log, note="telemetry query-gpu")
-    if not res.ok:
-        return None
-    return parse_query(res.stdout)
+    """Sample the core fields; throttle reasons are strictly best-effort.
+
+    The optional field is probed once. If the driver rejects it, we remember that
+    and keep querying core fields only -- one unsupported non-core metric must
+    not blank out GPU util / memory for the whole run.
+    """
+    global _throttle_supported
+
+    def _query(fields: str) -> Optional[NvmlSample]:
+        res = run([binary, "-i", uuid, f"--query-gpu={fields}",
+                   "--format=csv,noheader,nounits"],
+                  timeout_s=10, log=log, note="telemetry query-gpu")
+        if not res.ok:
+            return None
+        return parse_query(res.stdout)
+
+    if _throttle_supported is not False:
+        extended = CORE_QUERY + "," + ",".join(OPTIONAL_FIELDS)
+        sample = _query(extended)
+        if sample is not None:
+            _throttle_supported = True
+            return sample
+        _throttle_supported = False
+    return _query(CORE_QUERY)

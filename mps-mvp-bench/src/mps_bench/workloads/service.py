@@ -81,7 +81,6 @@ class GpuExecutor(threading.Thread):
 
     def run(self) -> None:
         from .base import checksum_tolerance_ok
-        reference = self.workload.reference_checksum()
         while True:
             job = self.jobs.get()
             if job is None:  # drain sentinel
@@ -91,10 +90,14 @@ class GpuExecutor(threading.Thread):
                 self.state.inflight += 1
             exec_start = time.monotonic()
             try:
-                res = self.workload.run_batch(self._batch_index)
+                batch_index = self._batch_index
+                res = self.workload.run_batch(batch_index)
                 self._batch_index += 1
                 gpu_done = time.monotonic()
                 ok_shape = len(res.output_shape) >= 1
+                # Each pool entry has its own legitimate output: compare against
+                # the reference of the batch we actually ran, not batch 0.
+                reference = self.workload.reference_checksum(batch_index)
                 ok_value = checksum_tolerance_ok(reference, res.checksum, self.tolerance)
                 if not ok_value:
                     with self.state.lock:

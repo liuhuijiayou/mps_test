@@ -68,7 +68,8 @@ def _metric_means(csv_path: str) -> Dict[str, Optional[float]]:
     min_free: Optional[float] = None
     with open(csv_path, "r", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
-            for key in ("sm_active", "gpu_util_device_busy_pct", "dram_active"):
+            for key in ("sm_active", "sm_occupancy", "gpu_util_device_busy_pct", "dram_active",
+                        "memory_used_mib"):
                 raw = row.get(key)
                 if raw in (None, "", "None"):
                     continue
@@ -92,7 +93,8 @@ def _metric_means(csv_path: str) -> Dict[str, Optional[float]]:
                     min_free = value if min_free is None else min(min_free, value)
     out: Dict[str, Optional[float]] = {
         key: (sums[key] / counts[key]) if counts.get(key) else None
-        for key in ("sm_active", "gpu_util_device_busy_pct", "dram_active")}
+        for key in ("sm_active", "sm_occupancy", "gpu_util_device_busy_pct", "dram_active",
+                    "memory_used_mib")}
     out["memory_used_mib_max"] = max_used
     out["memory_free_mib_min"] = min_free
     return out
@@ -148,6 +150,7 @@ def build_summary(run_dir: str) -> Dict[str, Any]:
                     "timeout_rate": _ratio(st.get("timeouts"), st.get("cohort_size")),
                     "reject_rate": _ratio(st.get("rejected"), st.get("cohort_size")),
                     "latency_p50_ms": (st.get("latency") or {}).get("p50"),
+                    "latency_mean_ms": (st.get("latency") or {}).get("mean"),
                     "latency_p95_ms": (st.get("latency") or {}).get("p95"),
                     "latency_p99_ms": (st.get("latency") or {}).get("p99"),
                     "latency_p999_ms": (st.get("latency") or {}).get("p999"),
@@ -166,10 +169,12 @@ def build_summary(run_dir: str) -> Dict[str, Any]:
                     "static_partition": (evidence.get("worker_runtime") or {}).get(
                         "static_partition"),
                     "sm_active_mean": metric_means.get("sm_active"),
+                    "sm_occupancy_mean": metric_means.get("sm_occupancy"),
                     "sm_active_available": telemetry_status.get("sm_active_available"),
                     "gpu_util_mean": metric_means.get("gpu_util_device_busy_pct"),
                     "dram_active_mean": metric_means.get("dram_active"),
                     "memory_used_mib_max": metric_means.get("memory_used_mib_max"),
+                    "memory_used_mib_mean": metric_means.get("memory_used_mib"),
                     "memory_free_mib_min": metric_means.get("memory_free_mib_min"),
                     "status": status, "status_reason": reason,
                     "synthetic": True,

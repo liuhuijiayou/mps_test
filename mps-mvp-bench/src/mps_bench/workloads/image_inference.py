@@ -91,7 +91,8 @@ class ImageInferenceWorkload(Workload):
             cpu_batch = torch.randn(self.batch_size, 3, self.input_size, self.input_size,
                                     generator=gen, dtype=torch.float32)
             self.pool.append(cpu_batch.to(self.device, dtype=self.dtype, non_blocking=False))
-        self._reference: Optional[float] = None
+        # One reference per pool entry, filled during warmup (see `warmup`).
+        self._references: Optional[List[float]] = None
 
     # ------------------------------------------------------------------ #
     def info(self) -> WorkloadInfo:
@@ -112,7 +113,9 @@ class ImageInferenceWorkload(Workload):
             for i in range(max(1, iterations)):
                 self.model(self.pool[i % len(self.pool)])
         torch.cuda.synchronize(self.device)
-        self._reference = self._compute_checksum(0)
+        # Pre-compute the reference for EVERY pool entry before READY, so the
+        # request path never runs an extra forward pass just to validate output.
+        self._references = [self._compute_checksum(i) for i in range(len(self.pool))]
 
     def _compute_checksum(self, batch_index: int) -> float:
         torch = self.torch
@@ -140,7 +143,7 @@ class ImageInferenceWorkload(Workload):
                            finite=bool(torch.isfinite(flat).all().item()),
                            samples=int(batch.shape[0]))
 
-    def reference_checksum(self) -> float:
-        if self._reference is None:
-            self._reference = self._compute_checksum(0)
-        return self._reference
+    def reference_checksum(self, batch_index: int = 0) -> float:
+        if self._references is None:
+            self._references = [self._compute_checksum(i) for i in range(len(self.pool))]
+        return self._references[batch_index % len(self._references)]

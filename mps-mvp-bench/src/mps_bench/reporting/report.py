@@ -23,11 +23,13 @@ SUMMARY_COLUMNS = [
     "incomplete", "output_errors",
     "throughput_req_s", "throughput_units_s", "slo_throughput_req_s",
     "success_rate", "error_rate", "timeout_rate", "reject_rate",
-    "latency_p50_ms", "latency_p95_ms", "latency_p99_ms", "latency_p999_ms",
+    "latency_p50_ms", "latency_mean_ms", "latency_p95_ms", "latency_p99_ms",
+    "latency_p999_ms",
     "latency_p999_status", "latency_samples",
     "gpu_ms_p50", "gpu_ms_p99", "queue_p99_ms", "send_delay_p99_ms",
-    "sm_active_mean", "sm_active_available", "gpu_util_mean", "dram_active_mean",
-    "memory_used_mib_max", "memory_free_mib_min",
+    "sm_active_mean", "sm_occupancy_mean", "sm_active_available",
+    "gpu_util_mean", "dram_active_mean",
+    "memory_used_mib_max", "memory_used_mib_mean", "memory_free_mib_min",
     "throughput_delta_vs_B0", "throughput_delta_vs_B2",
     "latency_delta_vs_B0", "latency_delta_vs_B2",
     "status", "status_reason", "synthetic",
@@ -279,14 +281,14 @@ def render_html(run_dir: str,
 
     perf_headers = ["case", "worker", "role", "unit", "ATP%", "prio", "Q req/s",
                     "units/s", "P99 ms", "Δtp vs B0", "Δtp vs B2", "ΔP99 vs B0",
-                    "ΔP99 vs B2", "err", "SM active"]
+                    "ΔP99 vs B2", "err", "SM active", "SM occ"]
     perf_rows = [[r.get("case_id"), r.get("worker_id"), r.get("role"), r.get("unit"),
                   r.get("mps_active_thread_pct"), r.get("mps_priority"),
                   r.get("throughput_req_s"), r.get("throughput_units_s"),
                   r.get("latency_p99_ms"), r.get("throughput_delta_vs_B0"),
                   r.get("throughput_delta_vs_B2"), r.get("latency_delta_vs_B0"),
                   r.get("latency_delta_vs_B2"), r.get("error_rate"),
-                  r.get("sm_active_mean")] for r in summary_rows]
+                  r.get("sm_active_mean"), r.get("sm_occupancy_mean")] for r in summary_rows]
 
     fault_table = ""
     if fault_summary:

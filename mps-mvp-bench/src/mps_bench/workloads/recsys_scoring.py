@@ -152,7 +152,8 @@ class RecsysScoringWorkload(Workload):
             offsets = torch.arange(0, total, self.indices_per_sample,
                                    dtype=torch.long, device=self.device)
             self.pool.append({"dense": dense, "indices": per_table, "offsets": offsets})
-        self._reference: Optional[float] = None
+        # One reference per pool entry, filled during warmup (see `warmup`).
+        self._references: Optional[List[float]] = None
 
     # ------------------------------------------------------------------ #
     def info(self) -> WorkloadInfo:
@@ -180,7 +181,9 @@ class RecsysScoringWorkload(Workload):
                 item = self.pool[i % len(self.pool)]
                 self.model(item["dense"], item["indices"], item["offsets"])
         torch.cuda.synchronize(self.device)
-        self._reference = self._compute_checksum(0)
+        # Pre-compute the reference for EVERY pool entry before READY, so the
+        # request path never runs an extra forward pass just to validate output.
+        self._references = [self._compute_checksum(i) for i in range(len(self.pool))]
 
     def _compute_checksum(self, batch_index: int) -> float:
         torch = self.torch
@@ -208,7 +211,7 @@ class RecsysScoringWorkload(Workload):
                            finite=bool(torch.isfinite(flat).all().item()),
                            samples=self.batch_size)
 
-    def reference_checksum(self) -> float:
-        if self._reference is None:
-            self._reference = self._compute_checksum(0)
-        return self._reference
+    def reference_checksum(self, batch_index: int = 0) -> float:
+        if self._references is None:
+            self._references = [self._compute_checksum(i) for i in range(len(self.pool))]
+        return self._references[batch_index % len(self._references)]

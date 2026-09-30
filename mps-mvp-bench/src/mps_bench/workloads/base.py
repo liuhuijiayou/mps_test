@@ -60,7 +60,15 @@ class Workload:
     def run_batch(self, batch_index: int) -> BatchResult:  # pragma: no cover
         raise NotImplementedError
 
-    def reference_checksum(self) -> float:  # pragma: no cover
+    def reference_checksum(self, batch_index: int = 0) -> float:  # pragma: no cover
+        """Reference checksum for the pool entry that `batch_index` maps to.
+
+        Every input batch in the pool has its own legitimate output, so a single
+        pool-wide reference would flag all but one batch as an output error.
+        Implementations must pre-compute the whole pool during warmup and answer
+        this in O(1) -- running an extra forward pass per request would pollute
+        the very latency/throughput numbers being measured.
+        """
         raise NotImplementedError
 
 
